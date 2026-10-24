@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prix immobiliers Saint-Nazaire</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root { --bg:#fff; --fg:#1d2433; --mute:#667085; --line:#e4e7ec; --accent:#1f5fae; --plus:#b42318; --moins:#067647; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--fg); background:var(--bg); }
+  .app { display:grid; grid-template-columns:360px 1fr; height:100vh; }
+  aside { overflow-y:auto; padding:16px; border-right:1px solid var(--line); }
+  #carte { height:100%; }
+  h1 { font-size:20px; margin:0 0 2px; }
+  h2 { font-size:15px; margin:20px 0 8px; }
+  .mute { color:var(--mute); font-size:13px; }
+  label { display:block; font-size:13px; color:var(--mute); margin:8px 0 2px; }
+  select, input { width:100%; padding:7px 8px; font:inherit; border:1px solid var(--line); border-radius:6px; background:#fff; }
+  .rang { display:flex; gap:8px; } .rang > * { flex:1; }
+  .coche { display:flex; gap:14px; margin-top:6px; } .coche label { display:flex; gap:6px; align-items:center; margin:0; color:var(--fg); font-size:14px; }
+  .coche input { width:auto; }
+  .verdict { margin-top:10px; padding:10px; border-radius:6px; background:#f4f6f8; font-size:14px; min-height:20px; }
+  .plus { color:var(--plus); font-weight:600; } .moins { color:var(--moins); font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td, th { padding:4px 2px; border-bottom:1px solid var(--line); text-align:left; }
+  td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; }
+  tr[data-q] { cursor:pointer; } tr[data-q]:hover { background:#f4f6f8; }
+  .legende { background:#fff; padding:8px 10px; border-radius:6px; font-size:12px; line-height:1.6; box-shadow:0 1px 4px rgba(0,0,0,.25); }
+  .legende i { display:inline-block; width:14px; height:10px; margin-right:6px; vertical-align:middle; }
+  .compte { font-weight:600; }
+  @media (max-width: 760px) {
+    .app { grid-template-columns:1fr; grid-template-rows:55vh auto; height:auto; }
+    #carte { height:55vh; order:-1; }
+    aside { border-right:0; }
+    .legende { font-size:10px; line-height:1.3; padding:5px 7px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <h1>Prix immobiliers — Saint-Nazaire</h1>
+  <div class="mute" id="maj"></div>
+
+  <h2>Filtrer les ventes</h2>
+  <div class="coche">
+    <label><input type="checkbox" id="fA" checked> Appartements</label>
+    <label><input type="checkbox" id="fI" checked> Immeubles</label>
+  </div>
+  <div class="rang">
+    <div><label for="fDe">Depuis</label><select id="fDe"></select></div>
+    <div><label for="fPc">Pièces</label>
+      <select id="fPc"><option value="">Toutes</option><option>1</option><option>2</option><option>3</option><option>4</option><option value="5">5 et +</option></select></div>
+  </div>
+  <div class="rang">
+    <div><label for="fMin">Prix min (€)</label><input id="fMin" type="number" inputmode="numeric" step="10000" placeholder="—"></div>
+    <div><label for="fMax">Prix max (€)</label><input id="fMax" type="number" inputmode="numeric" step="10000" placeholder="—"></div>
+  </div>
+  <p class="mute"><span class="compte" id="nb"></span> ventes affichées. Cliquer un point pour le détail.</p>
+
+  <h2>Une annonce est-elle au bon prix ?</h2>
+  <label for="cQ">Quartier</label><select id="cQ"></select>
+  <div class="rang">
+    <div><label for="cS">Surface (m²)</label><input id="cS" type="number" inputmode="numeric" placeholder="ex. 65"></div>
+    <div><label for="cP">Prix demandé (€)</label><input id="cP" type="number" inputmode="numeric" placeholder="ex. 180000"></div>
+  </div>
+  <div class="verdict" id="verdict">Renseigner les trois champs.</div>
+
+  <h2>Prix médian par quartier (appartements)</h2>
+  <table><thead><tr><th>Quartier</th><th class="n">€/m²</th><th class="n">Ventes</th></tr></thead><tbody id="tab"></tbody></table>
+
+  <h2>À savoir</h2>
+  <p class="mute">Source : DVF (Demandes de valeurs foncières, data.gouv.fr), ventes réellement signées. Publiées deux fois par an, avec environ 6 mois de retard : les ventes récentes n'y sont pas encore.
+  « Immeuble » = vente en un seul acte de plusieurs appartements (bloc, ou programme neuf vendu à un investisseur).
+  Les combles ne sont pas identifiables dans DVF. Prix médian calculé sur les 24 derniers mois disponibles, quartiers INSEE (IRIS), minimum 5 ventes.</p>
+</aside>
+<div id="carte"></div>
+</div>
+
+<script>
+const fmt = n => n == null ? "—" : Math.round(n).toLocaleString("fr-FR");
+const COUL = ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"];
+const SEUILS = [2400, 2700, 3000, 3400];  // €/m²
+const couleur = m => m == null ? "#d0d5dd" : COUL[SEUILS.filter(s => m >= s).length];
+
+const carte = L.map("carte").setView([47.275, -2.235], 13);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(carte);
+const points = L.layerGroup().addTo(carte);
+const $ = id => document.getElementById(id);
+let VENTES = [], QUARTIERS = {}, coucheQ;
+
+Promise.all([fetch("data/ventes.json").then(r => r.json()), fetch("data/quartiers.geojson").then(r => r.json())]).then(([v, q]) => {
+  VENTES = v.ventes;
+  $("maj").textContent = `Ventes jusqu'au ${new Date(v.derniere_vente).toLocaleDateString("fr-FR")} · page mise à jour le ${new Date(v.maj).toLocaleDateString("fr-FR")}`;
+  q.features.forEach(f => QUARTIERS[f.properties.code] = f.properties);
+
+  coucheQ = L.geoJSON(q, {
+    style: f => ({ fillColor: couleur(f.properties.med), fillOpacity: .45, color: "#555", weight: 1 }),
+    onEachFeature: (f, l) => l.bindTooltip(`<b>${f.properties.nom}</b><br>${f.properties.med ? fmt(f.properties.med) + " €/m²" : "trop peu de ventes"} · ${f.properties.nb} ventes`, { sticky: true })
+  }).addTo(carte);
+  carte.invalidateSize();
+  carte.fitBounds(coucheQ.getBounds());
+
+  const tri = Object.values(QUARTIERS).sort((a, b) => (b.med || 0) - (a.med || 0));
+  $("tab").innerHTML = tri.map(p => `<tr data-q="${p.code}"><td>${p.nom}</td><td class="n">${fmt(p.med)}</td><td class="n">${p.nb}</td></tr>`).join("");
+  $("cQ").innerHTML = '<option value="">Choisir…</option>' + [...tri].sort((a, b) => a.nom.localeCompare(b.nom)).map(p => `<option value="${p.code}">${p.nom}</option>`).join("");
+  document.querySelectorAll("tr[data-q]").forEach(tr => tr.onclick = () => {
+    coucheQ.eachLayer(l => { if (l.feature.properties.code === tr.dataset.q) { carte.fitBounds(l.getBounds()); l.openTooltip(); } });
+    if (window.innerWidth < 760) $("carte").scrollIntoView({ behavior: "smooth" });
+  });
+
+  const annees = [...new Set(VENTES.map(x => x.d.slice(0, 4)))].sort();
+  $("fDe").innerHTML = annees.map(a => `<option ${a === annees[annees.length - 2] ? "selected" : ""}>${a}</option>`).join("");
+  dessiner();
+});
+
+function dessiner() {
+  const de = $("fDe").value, pc = $("fPc").value, mn = +$("fMin").value || 0, mx = +$("fMax").value || Infinity;
+  const ok = VENTES.filter(v => (v.t === "A" ? $("fA").checked : $("fI").checked) && v.d >= de && v.p >= mn && v.p <= mx
+    && (!pc || (v.t === "A" && (pc === "5" ? v.pc >= 5 : v.pc == pc))));
+  points.clearLayers();
+  ok.forEach(v => {
+    const q = QUARTIERS[v.q], m2 = v.p / v.s;
+    L.circleMarker([v.y, v.x], { radius: v.t === "I" ? 8 : 5, weight: 1, color: "#fff", fillColor: v.t === "I" ? "#6941c6" : "#1f5fae", fillOpacity: .85 })
+      .bindPopup(`<b>${v.t === "I" ? `Immeuble · ${v.n} logements` : `Appartement${v.pc ? " · " + v.pc + " p." : ""}`}${v.neuf ? " (neuf)" : ""}</b><br>
+        ${v.adr || ""}${q ? " — " + q.nom : ""}<br>
+        ${new Date(v.d).toLocaleDateString("fr-FR")}<br>
+        <b>${fmt(v.p)} €</b> · ${v.s} m² · <b>${fmt(m2)} €/m²</b>${q && q.med ? `<br>Médiane quartier : ${fmt(q.med)} €/m²` : ""}`)
+      .addTo(points);
+  });
+  $("nb").textContent = fmt(ok.length);
+}
+
+function verdict() {
+  const q = QUARTIERS[$("cQ").value], s = +$("cS").value, p = +$("cP").value;
+  if (!q || !s || !p) return $("verdict").textContent = "Renseigner les trois champs.";
+  const m2 = p / s;
+  if (!q.med) return $("verdict").innerHTML = `${fmt(m2)} €/m². Pas assez de ventes à ${q.nom} pour comparer.`;
+  const e = (m2 / q.med - 1) * 100;
+  $("verdict").innerHTML = `Annonce : <b>${fmt(m2)} €/m²</b> · médiane ${q.nom} : ${fmt(q.med)} €/m²<br>
+    <span class="${e > 0 ? "plus" : "moins"}">${e > 0 ? "+" : ""}${e.toFixed(0)} % ${e > 0 ? "au-dessus" : "en dessous"} du quartier</span>`;
+}
+
+["fA", "fI", "fDe", "fPc", "fMin", "fMax"].forEach(id => $(id).addEventListener("input", dessiner));
+["cQ", "cS", "cP"].forEach(id => $(id).addEventListener("input", verdict));
+
+const leg = L.control({ position: "bottomright" });
+leg.onAdd = () => {
+  const d = L.DomUtil.create("div", "legende");
+  const b = ["< 2 400", "2 400–2 700", "2 700–3 000", "3 000–3 400", "> 3 400"];
+  d.innerHTML = "<b>€/m² médian</b><br>" + COUL.map((c, i) => `<i style="background:${c}"></i>${b[i]}`).join("<br>")
+    + '<br><i style="background:#1f5fae;border-radius:50%;width:10px"></i>Appartement<br><i style="background:#6941c6;border-radius:50%;width:10px"></i>Immeuble';
+  return d;
+};
+leg.addTo(carte);
+</script>
+</body>
+</html>
